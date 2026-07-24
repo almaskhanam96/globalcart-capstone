@@ -1,0 +1,77 @@
+name: GlobalCart Main Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: globalcart-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint and Unit Test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npm test
+
+  docker_publish:
+    name: Build and Publish Container
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/shared-docker.yml
+    with:
+      image_name: globalcart-capstone
+      dockerfile: Dockerfile
+      context: .
+    secrets:
+      registry_token: ${{ secrets.CR_PAT }}
+
+  deploy_production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: docker_publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: Production
+
+    steps:
+      - name: Mock deployment
+        env:
+          IMAGE_URI: ${{ needs.docker_publish.outputs.image_uri }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "Deploying image: $IMAGE_URI"
+          echo "Using database connection securely from secrets."
+          echo "Production deployment completed."
